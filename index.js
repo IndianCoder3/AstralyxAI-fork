@@ -1,25 +1,68 @@
 /**
- * AstralyxPvP Discord AI Bot - Self-Healing, Fully Logged Worker
- * Fixed third-person addressing bug by introducing strict direct-response system instructions.
+ * AstralyxPvP Discord AI Bot - Cloudflare Worker
+ * Fully integrated with strict Role ID hierarchy and staff-command permission guards.
  */
 
 import { verifyKey } from 'discord-interactions';
 
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
+
+// Precise Role ID Hierarchy List (Highest to Lowest)
+const ROLE_HIERARCHY = [
+  { id: '1477025238784151554', tag: 'Owner' },
+  { id: '1477291491003994214', tag: 'Co-Owner' },
+  { id: '1502815102716608552', tag: 'Chief Manager' },
+  { id: '1497335106074050620', tag: 'Sr. Manager' },
+  { id: '1483209618485284964', tag: 'Manager' },
+  { id: '1498734182615089314', tag: 'Head of General Affairs' },
+  { id: '1498734243352678630', tag: 'Head of Internal Affairs' },
+  { id: '1497316294632931358', tag: 'Developer' },
+  { id: '1497316250945323070', tag: 'Admin' },
+  { id: '1497316120452136960', tag: 'Sr. Mod' },
+  { id: '1477025502119334109', tag: 'Mod' },
+  { id: '1497316057214484735', tag: 'Jr. Mod' },
+  { id: '1477025528174219476', tag: 'Helper' },
+  { id: '1501217374102229185', tag: 'Trial Staff' },
+  { id: '1511596382706991144', tag: 'Veteran (Ex-Staff)' },
+  { id: '1477025683061604432', tag: 'YouTube Rank' },
+  { id: '1497315976017084457', tag: 'Astralyx+' },
+  { id: '1477031144426836183', tag: 'AstralyxBot' },
+  { id: '1484285067218911493', tag: 'Chat Assistant' },
+  { id: '1484284923794685992', tag: 'Meme Lord' },
+  { id: '1477025773033623673', tag: 'Member' }
+];
+
+// Admin and above role IDs allowed to run administrative AI commands (/aiban, /aiunban)
+const ADMIN_AND_ABOVE_ROLE_IDS = [
+  '1477025238784151554', // Owner
+  '1477291491003994214', // Co-Owner
+  '1502815102716608552', // Chief Manager
+  '1497335106074050620', // Sr. Manager
+  '1483209618485284964', // Manager
+  '1498734182615089314', // Head of General Affairs
+  '1498734243352678630', // Head of Internal Affairs
+  '1497316294632931358', // Developer
+  '1497316250945323070'  // Admin
+];
+
+const DEVELOPER_USER_ID = "1513925512118931551";
+
 const DEFAULT_SYSTEM_PROMPT = `You are the official AI mascot for AstralyxPvP, a competitive Minecraft PvP server. 
 
-⚠️ CRITICAL INSTRUCTION ON HOW TO ADDRESS USERS:
-- You will receive incoming messages formatted as: "(Username): message".
-- You must always respond DIRECTLY to that user in the second person ("you", "your").
-- NEVER speak about the user in the third person! For example, if you receive "(sussyindian3): Hey!", do NOT say "Tell sussyindian3 I said what's up" or "Tell him...". Instead, respond directly: "Hey sussyindian3! What's up!" or "What's up! Ready to hit the arena?"
-- Treat the username in the parentheses as the person you are currently looking at and talking to face-to-face.
+⚠️ CRITICAL INSTRUCTIONS ON ROLE HANDLING & DIRECT RESPONDING:
+- You will receive messages formatted as: "(Username [Ranks]): message".
+- Treat the username inside the parentheses as the actual person standing directly in front of you. Address them in the second person ("you", "your"). NEVER speak about them in the third person.
+- Treat "!!! IndianCoder3 | Sing for Kelp" (User ID: 1513925512118931551) with utmost appreciation and respect as your Developer, Creator, and custom AI Architect. If he asks about his rank, confirm he is your Creator & Developer, NOT the server owner!
+- Respect other team ranks accordingly:
+  * Owner (e.g. 1477025238784151554) & Co-Owner: The server heads.
+  * Managers & Chiefs: Command authority.
+  * Developers: Technical masterminds.
+  * Admin / Mods / Helpers: Server security team.
+  * AstralyxBot: Your sibling bots running on the server!
+  * Astralyx+: High-tier supporters/donators of the server.
+  * Meme Lord: Legends with hilarious memes. Respond with high energy or humor!
 
-You are friendly, competitive, and highly knowledgeable about Minecraft PvP mechanics including:
-- Sword FFA (spacing, timing, critical hits, block-hitting)
-- Mace FFA (wind charges, high-ground setups, smash attacks)
-- Netherite Pot FFA (potion management, pearl clutching, armor durability, aggressive pressure)
-
-Keep your responses clear, natural, and formatted nicely with Discord Markdown. Avoid robotic introductions. Help players with PvP advice, server info, and strategies!`;
+You are highly knowledgeable about competitive Minecraft PvP mechanics (spacing, sword crits, block hitting, wind charge smashing with Maces, potion/pearl management in Netherite Pot FFA). Keep responses natural, direct, and clear.`;
 
 const localRateLimits = new Map();
 const RATE_LIMIT_COOLDOWN_MS = 4000;
@@ -28,38 +71,32 @@ export default {
   async fetch(request, env, ctx) {
     try {
       if (request.method !== 'POST') {
-        return jsonResponse({ status: 'ok', message: 'Astralyx PvP Bot is running online' }, 200);
+        return jsonResponse({ status: 'ok', message: 'Astralyx AI Bot is online.' }, 200);
       }
 
-      // Check if this is a secure forward from our Gateway Bridge
       const authHeader = request.headers.get('authorization');
       const gatewaySecret = env.GATEWAY_SECRET;
 
       if (gatewaySecret && authHeader === `Bearer ${gatewaySecret}`) {
-        console.log("🔗 Connection: Authenticated Gateway Bridge request received.");
         return await handleGatewayForward(request, env);
       }
 
-      // Fallback to standard Discord signature validation for Webhook Interactions
       const signature = request.headers.get('x-signature-ed25519');
       const timestamp = request.headers.get('x-signature-timestamp');
       const rawBody = await request.text();
 
       if (!signature || !timestamp) {
-        console.warn("⚠️ Warning: Request received missing signature headers.");
-        return jsonResponse({ error: 'Missing credentials' }, 401);
+        return jsonResponse({ error: 'Missing security signatures' }, 401);
       }
 
       const isValid = await verifyKey(rawBody, signature, timestamp, env.DISCORD_PUBLIC_KEY);
       if (!isValid) {
-        console.warn("⚠️ Warning: Invalid Discord signature verification attempt.");
-        return jsonResponse({ error: 'Signature validation failed' }, 401);
+        return jsonResponse({ error: 'Signature verification failed' }, 401);
       }
 
       const interaction = JSON.parse(rawBody);
 
       if (interaction.type === 1) { // PING
-        console.log("ℹ️ Info: Responding to Discord PING handshakes.");
         return jsonResponse({ type: 1 });
       }
 
@@ -69,27 +106,36 @@ export default {
 
       return jsonResponse({ error: 'Unsupported interaction type' }, 400);
     } catch (error) {
-      console.error('❌ Fatal error in Fetch handler:', error);
+      console.error('Fatal error in worker:', error);
       return jsonResponse({ error: 'Internal server error' }, 500);
     }
   }
 };
 
 /**
- * Handles incoming ping/mention payloads forwarded from the external Gateway Bridge
+ * Helper to check if a user is authorized for staff commands
+ */
+function isUserAdminOrAbove(userId, userRoleIds) {
+  if (userId === DEVELOPER_USER_ID) return true;
+  if (!userRoleIds || !Array.isArray(userRoleIds)) return false;
+  return userRoleIds.some(roleId => ADMIN_AND_ABOVE_ROLE_IDS.includes(roleId));
+}
+
+/**
+ * Handles incoming traffic from our Node.js Gateway Bridge
  */
 async function handleGatewayForward(request, env) {
   try {
     const payload = await request.json();
-    const { prompt, channelId, userId, username } = payload;
+    const { prompt, channelId, userId, username, roleIds } = payload;
 
     if (!prompt || !channelId || !userId) {
-      return jsonResponse({ error: 'Bad Request: Missing parameters' }, 400);
+      return jsonResponse({ error: 'Missing parameters' }, 400);
     }
 
-    console.log(`📡 [Gateway Forward] Prompt: "${prompt}" from user ${username} (${userId})`);
+    console.log(`📡 [Gateway Forward] Prompt from ${username} (${userId})`);
 
-    // Check Ban Status
+    // Guard Check: Is Banned?
     let isBanned = false;
     if (env.CHAT_HISTORY) {
       isBanned = await env.CHAT_HISTORY.get(`banned:${userId}`);
@@ -98,15 +144,15 @@ async function handleGatewayForward(request, env) {
       return jsonResponse({ response: "❌ You are currently restricted from interacting with the AI on this server." });
     }
 
-    // Rate limiting check
+    // Rate Limit Check
     const now = Date.now();
     const lastRequest = localRateLimits.get(userId) || 0;
     if (now - lastRequest < RATE_LIMIT_COOLDOWN_MS) {
-      return jsonResponse({ response: "⏳ Slow down! Please wait a few seconds before asking again." });
+      return jsonResponse({ response: "⏳ Slow down! Please wait a few seconds before sending another message." });
     }
     localRateLimits.set(userId, now);
 
-    // Retrieve past channel history
+    // Retrieve conversation history
     let conversationHistory = [];
     if (env.CHAT_HISTORY) {
       const historyKey = `history:${channelId}`;
@@ -120,7 +166,7 @@ async function handleGatewayForward(request, env) {
       }
     }
 
-    // Use direct "(Username): prompt" formatting to make it clear who is speaking
+    // Format prompt cleanly as (Username [Ranks]): prompt
     const cleanPrompt = `(${username}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
@@ -128,10 +174,10 @@ async function handleGatewayForward(request, env) {
       conversationHistory = conversationHistory.slice(conversationHistory.length - 12);
     }
 
-    // Get response from Gemini
+    // Fetch from Gemini
     const aiResponse = await generateGeminiContent(conversationHistory, env);
 
-    // Save history back to KV
+    // Store history
     if (env.CHAT_HISTORY) {
       const historyKey = `history:${channelId}`;
       conversationHistory.push({ role: 'model', parts: [{ text: aiResponse }] });
@@ -141,74 +187,36 @@ async function handleGatewayForward(request, env) {
     return jsonResponse({ response: aiResponse });
 
   } catch (err) {
-    console.error("❌ Error processing gateway forward:", err);
-    return jsonResponse({ response: "⚠️ Error processing your prompt in the Cloudflare backend." }, 500);
+    console.error("Gateway processing failed:", err);
+    return jsonResponse({ response: "⚠️ Failed to process your message in the Cloudflare backend." }, 500);
   }
 }
 
 /**
- * Route both Chat Input (slash commands) and Context Menu commands
+ * Handles Webhook Slash Commands
  */
 async function handleApplicationCommand(interaction, env, ctx) {
   const { name, options, type: commandType } = interaction.data;
   const userId = interaction.member?.user?.id || interaction.user?.id;
   const channelId = interaction.channel_id;
 
-  console.log(`🤖 Command Triggered: /${name} (Type: ${commandType}) by User ID: ${userId} in Channel: ${channelId}`);
-
-  // Fetch friendly display name for formatting
-  const username = interaction.member?.nick || interaction.member?.user?.global_name || interaction.member?.user?.username || interaction.user?.username || "Player";
-
-  // Handle Context Menu commands (Type 3 is MESSAGE context command)
-  if (commandType === 3 && name === 'Reply with AI') {
-    const targetId = interaction.data.target_id;
-    const targetMessage = interaction.data.resolved?.messages?.[targetId];
-    const userPrompt = targetMessage?.content;
-
-    if (!userPrompt) {
-      return ephemeralResponse("Can't read the contents of that message to reply!");
-    }
-
-    // Rate Limiting Check
-    const now = Date.now();
-    const lastRequest = localRateLimits.get(userId) || 0;
-    if (now - lastRequest < RATE_LIMIT_COOLDOWN_MS) {
-      return ephemeralResponse("⏳ Slow down! Please wait a few seconds before requesting another reply.");
-    }
-    localRateLimits.set(userId, now);
-
-    // Defer response to avoid Discord 3-second timeout limits
-    const authorName = targetMessage.author?.global_name || targetMessage.author?.username || "Player";
-    ctx.waitUntil(
-      handleDeferredChat(interaction, userPrompt, channelId, userId, env, true, authorName)
-    );
-
-    return jsonResponse({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
-  }
-
-  // Handle standard slash commands
-  const permissions = BigInt(interaction.member?.permissions || '0');
-  const isStaff = (permissions & 0x8n) === 0x8n || (permissions & 0x20n) === 0x20n;
+  // Resolve user roles list from Discord interaction payload
+  const userRoleIds = interaction.member?.roles || [];
+  const hasStaffPerms = isUserAdminOrAbove(userId, userRoleIds);
 
   switch (name) {
     case 'chat': {
       const messageOption = options?.find(opt => opt.name === 'message');
       const userPrompt = messageOption?.value;
 
-      if (!userPrompt) {
-        return ephemeralResponse("Please provide a prompt for the AI.");
-      }
+      if (!userPrompt) return ephemeralResponse("Please provide a prompt for the AI.");
 
-      // Check Ban Status Safely
       let isBanned = false;
       if (env.CHAT_HISTORY) {
         isBanned = await env.CHAT_HISTORY.get(`banned:${userId}`);
       }
-      if (isBanned) {
-        return ephemeralResponse("❌ You are currently restricted from interacting with the AI on this server.");
-      }
+      if (isBanned) return ephemeralResponse("❌ You are currently restricted from interacting with the AI on this server.");
 
-      // Rate Limiting Check
       const now = Date.now();
       const lastRequest = localRateLimits.get(userId) || 0;
       if (now - lastRequest < RATE_LIMIT_COOLDOWN_MS) {
@@ -216,24 +224,34 @@ async function handleApplicationCommand(interaction, env, ctx) {
       }
       localRateLimits.set(userId, now);
 
-      // Defer response to avoid Discord 3-second timeout limits
+      // Resolve friendly name with roles mapping for slash commands
+      const userDisplayName = interaction.member?.nick || interaction.member?.user?.global_name || interaction.member?.user?.username || "Player";
+      const resolvedBadges = [];
+      if (userId === DEVELOPER_USER_ID) {
+        resolvedBadges.push("Developer & AI Creator");
+      }
+      for (const roleId of userRoleIds) {
+        const found = ROLE_HIERARCHY.find(r => r.id === roleId);
+        if (found && !resolvedBadges.includes(found.tag)) {
+          resolvedBadges.push(found.tag);
+        }
+      }
+      const formattedSenderName = resolvedBadges.length > 0 ? `${userDisplayName} [${resolvedBadges.join('/')}]` : userDisplayName;
+
       ctx.waitUntil(
-        handleDeferredChat(interaction, userPrompt, channelId, userId, env, false, username)
+        handleDeferredChat(interaction, userPrompt, channelId, userId, env, false, formattedSenderName)
       );
 
-      return jsonResponse({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+      return jsonResponse({ type: 5 });
     }
 
     case 'reset': {
       if (env.CHAT_HISTORY) {
         await env.CHAT_HISTORY.delete(`history:${channelId}`);
-        console.log(`🧹 Chat history cleared for channel: ${channelId}`);
       }
       return jsonResponse({
         type: 4,
-        data: {
-          content: "🧹 **AI Conversation Memory cleared for this channel!** Starting fresh."
-        }
+        data: { content: "🧹 **AI Conversation Memory cleared for this channel!** Starting fresh." }
       });
     }
 
@@ -259,7 +277,7 @@ async function handleApplicationCommand(interaction, env, ctx) {
     }
 
     case 'aiban': {
-      if (!isStaff) return ephemeralResponse("🚫 Only server administrators or staff can run this command.");
+      if (!hasStaffPerms) return ephemeralResponse("🚫 Only Admins or higher ranks can run this command.");
       const targetUser = options?.find(opt => opt.name === 'user')?.value;
       if (!targetUser) return ephemeralResponse("Please specify a user to ban.");
 
@@ -273,7 +291,7 @@ async function handleApplicationCommand(interaction, env, ctx) {
     }
 
     case 'aiunban': {
-      if (!isStaff) return ephemeralResponse("🚫 Only server administrators or staff can run this command.");
+      if (!hasStaffPerms) return ephemeralResponse("🚫 Only Admins or higher ranks can run this command.");
       const targetUser = options?.find(opt => opt.name === 'user')?.value;
       if (!targetUser) return ephemeralResponse("Please specify a user to unban.");
 
@@ -292,46 +310,34 @@ async function handleApplicationCommand(interaction, env, ctx) {
 }
 
 /**
- * Handles deferred AI response generation asynchronously
+ * Async Webhook Patcher for deferred chat
  */
 async function handleDeferredChat(interaction, prompt, channelId, userId, env, isContextMenu = false, originalAuthor = "") {
   const applicationId = interaction.application_id;
   const patchUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${interaction.token}/messages/@original`;
-  
-  console.log(`[Deferred Engine] Starting task for User: ${userId}. URL: ${patchUrl}`);
 
   try {
     let conversationHistory = [];
-    
     if (env.CHAT_HISTORY) {
-      console.log(`[Deferred Engine] Fetching conversation memory from KV storage...`);
       const historyKey = `history:${channelId}`;
       const savedHistory = await env.CHAT_HISTORY.get(historyKey);
       if (savedHistory) {
         try {
           conversationHistory = JSON.parse(savedHistory);
         } catch (e) {
-          console.warn(`[Deferred Engine] Failed to parse history JSON, resetting channel context:`, e);
           conversationHistory = [];
         }
       }
     }
 
-    // Always keep standard direct format: (Name): prompt
-    let cleanPrompt = `(${originalAuthor}): ${prompt}`;
-    if (isContextMenu) {
-      cleanPrompt = `(${originalAuthor} - replying to their message): ${prompt}`;
-    }
-
+    const cleanPrompt = `(${originalAuthor}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 12) {
       conversationHistory = conversationHistory.slice(conversationHistory.length - 12);
     }
 
-    console.log(`[Deferred Engine] Querying Gemini AI APIs...`);
     const aiResponse = await generateGeminiContent(conversationHistory, env);
-    console.log(`[Deferred Engine] Gemini AI response received successfully.`);
 
     if (env.CHAT_HISTORY) {
       const historyKey = `history:${channelId}`;
@@ -339,49 +345,25 @@ async function handleDeferredChat(interaction, prompt, channelId, userId, env, i
       await env.CHAT_HISTORY.put(historyKey, JSON.stringify(conversationHistory), { expirationTtl: 86400 });
     }
 
-    let finalContent = "";
-    if (isContextMenu) {
-      finalContent = `💬 **Replying to **${originalAuthor}**:** *"${prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt}"*\n\n${aiResponse}`;
-    } else {
-      finalContent = `💬 **<@${userId}>:** ${prompt.length > 150 ? prompt.substring(0, 150) + '...' : prompt}\n\n${aiResponse}`;
-    }
+    const finalContent = `💬 **<@${userId}>:** ${prompt.length > 150 ? prompt.substring(0, 150) + '...' : prompt}\n\n${aiResponse}`;
 
-    const patchRes = await fetch(patchUrl, {
+    await fetch(patchUrl, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: finalContent })
     });
 
-    if (patchRes.ok) {
-      console.log(`✨ [Deferred Engine] Success! Discord original message updated.`);
-    } else {
-      console.error(`❌ [Deferred Engine] Failed to patch Discord. Response Status: ${patchRes.status}`);
-    }
-
   } catch (error) {
-    console.error("❌ [Deferred Engine] Error occurred during deferred processing:", error);
-    try {
-      await fetch(patchUrl, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: `❌ **AI Processing Error:** Something went wrong in the background.`
-        })
-      });
-    } catch (patchErr) {
-      console.error("❌ Failed to send crash notification back to Discord:", patchErr);
-    }
+    console.error("Deferred chat processing failed:", error);
   }
 }
 
 /**
- * Call Gemini with error-logging and retry support
+ * Access Gemini Endpoint
  */
 async function generateGeminiContent(contents, env) {
   const apiKey = env.GOOGLE_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing 'GOOGLE_API_KEY' secret variable.");
-  }
+  if (!apiKey) throw new Error("Missing GOOGLE_API_KEY");
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL || GEMINI_MODEL}:generateContent?key=${apiKey}`;
   const payload = {
@@ -404,7 +386,7 @@ async function generateGeminiContent(contents, env) {
         const json = await response.json();
         const responseText = json.candidates?.[0]?.content?.parts?.[0]?.text;
         if (responseText) return responseText;
-        throw new Error("Gemini returned empty parts.");
+        throw new Error("Empty model response");
       }
 
       if (response.status >= 500 || response.status === 429) {
@@ -412,9 +394,7 @@ async function generateGeminiContent(contents, env) {
         delay *= 2;
         continue;
       }
-
-      const errorText = await response.text();
-      throw new Error(`Non-retriable Gemini Status: ${errorText}`);
+      throw new Error(`API rejection: ${await response.text()}`);
     } catch (err) {
       if (attempt === 5) throw err;
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -424,7 +404,7 @@ async function generateGeminiContent(contents, env) {
 }
 
 /**
- * Handles deferred server status check
+ * Server Status Check
  */
 async function handleDeferredPing(interaction, env) {
   const applicationId = interaction.application_id;
@@ -471,9 +451,7 @@ async function handleDeferredPing(interaction, env) {
     await fetch(patchUrl, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content: `❌ Could not reach Astralyx Minecraft Server Status.`
-      })
+      body: JSON.stringify({ content: `❌ Could not reach Astralyx Minecraft Server Status.` })
     });
   }
 }
@@ -509,17 +487,8 @@ function getEloTier(elo) {
 }
 
 function generateMockLeaderboard(gamemode) {
-  const modeNames = {
-    swordffa1: "Sword FFA",
-    maceffa: "Mace FFA",
-    nethpotffa: "Netherite Pot FFA"
-  };
-
-  const modeColors = {
-    swordffa1: 3447003,
-    maceffa: 10181046,
-    nethpotffa: 15105570
-  };
+  const modeNames = { swordffa1: "Sword FFA", maceffa: "Mace FFA", nethpotffa: "Netherite Pot FFA" };
+  const modeColors = { swordffa1: 3447003, maceffa: 10181046, nethpotffa: 15105570 };
 
   const topPlayers = [
     { name: "PvPGod_Astral", elo: 2145 },
@@ -544,10 +513,7 @@ function generateMockLeaderboard(gamemode) {
 }
 
 function ephemeralResponse(text) {
-  return jsonResponse({
-    type: 4,
-    data: { content: text, flags: 64 }
-  });
+  return jsonResponse({ type: 4, data: { content: text, flags: 64 } });
 }
 
 function jsonResponse(data, status = 200) {
