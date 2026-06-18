@@ -1,7 +1,7 @@
 /**
  * AstralyxPvP Discord AI Gateway Bridge - Cloudflare Worker Edition
- * This worker runs on Cloudflare and maintains a persistent WebSocket connection
- * to the Discord Gateway, forwarding pings and replies to your main AI Worker.
+ * Maintains a persistent WebSocket connection to the Discord Gateway,
+ * and streams real-time console logs directly to a web-based dashboard.
  */
 
 // Configuration Map of snowflake IDs to clean role tags
@@ -30,26 +30,81 @@ const ROLE_MAP = [
 
 const DEVELOPER_USER_ID = "1513925512118931551";
 
+// In-memory array of active streaming log listeners
+const activeLogStreams = [];
+
 export default {
   async fetch(request, env, ctx) {
-    // This endpoint allows you to trigger/warm up the connection via a simple Web request or cron trigger
-    if (request.url.endsWith("/connect") || request.method === "GET") {
-      try {
-        await establishDiscordConnection(env, ctx);
-        return new Response("WebSocket connection initiated on Cloudflare!", { status: 200 });
-      } catch (err) {
-        return new Response(`Error: ${err.message}`, { status: 500 });
-      }
+    const url = new URL(request.url);
+
+    // Endpoint to stream raw logs back to our browser terminal via SSE
+    if (url.pathname === "/connect/stream") {
+      const stream = new ReadableStream({
+        start(controller) {
+          activeLogStreams.push(controller);
+          
+          // Instantly send confirmation and trigger the connection
+          broadcastLog("🚀 [Gateway System] Log streaming channel opened successfully.");
+          ctx.waitUntil(
+            establishDiscordConnection(env, ctx).catch(err => {
+              broadcastLog(`❌ [Connection Error] ${err.message}`);
+            })
+          );
+        },
+        cancel() {
+          const idx = activeLogStreams.indexOf(this);
+          if (idx !== -1) activeLogStreams.splice(idx, 1);
+          console.log("🔌 Live stream client closed.");
+        }
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*"
+        }
+      });
     }
-    return new Response("Cloudflare Gateway Worker is running.", { status: 200 });
+
+    // Serve a premium web terminal interface on /connect
+    if (url.pathname === "/connect" || url.pathname === "/connect/") {
+      return new Response(getTerminalHTML(), {
+        headers: { "Content-Type": "text/html" }
+      });
+    }
+
+    return new Response("Cloudflare Gateway Worker is running. Visit /connect to see live console.", { status: 200 });
   },
 
-  // Automatically keep the connection alive using Cloudflare Cron Triggers (run every 1-5 minutes)
+  // Keep gateway active in background with cron checks
   async scheduled(event, env, ctx) {
-    console.log("⏰ Cron Trigger: Ensuring Discord Gateway WebSocket is alive...");
+    broadcastLog("⏰ [Cron Trigger] Running periodic connection validation check...");
     ctx.waitUntil(establishDiscordConnection(env, ctx));
   }
 };
+
+/**
+ * Broadcasts logs to both standard Wrangler logs and any active browser terminal tabs
+ */
+function broadcastLog(message) {
+  const timestamp = new Date().toLocaleTimeString();
+  const formattedLog = `[${timestamp}] ${message}`;
+  
+  // Standard Cloudflare console log
+  console.log(formattedLog);
+
+  // Broadcast to all active browser SSE streams
+  for (let i = activeLogStreams.length - 1; i >= 0; i--) {
+    const controller = activeLogStreams[i];
+    try {
+      controller.enqueue(new TextEncoder().encode(`data: ${formattedLog}\n\n`));
+    } catch (err) {
+      activeLogStreams.splice(i, 1); // Clean up dead client
+    }
+  }
+}
 
 let globalWebSocket = null;
 let heartbeatInterval = null;
@@ -58,17 +113,15 @@ let sessionId = null;
 
 async function establishDiscordConnection(env, ctx) {
   if (globalWebSocket && globalWebSocket.readyState === 1) {
-    console.log("🟢 Gateway is already connected and active.");
+    broadcastLog("🟢 [Gateway Monitor] Connection is active and healthy.");
     return;
   }
 
   const token = env.DISCORD_TOKEN;
-  // Use https:// instead of wss:// for Cloudflare fetch outbound upgrade handshakes
   const gatewayUrl = "https://gateway.discord.gg/?v=10&encoding=json";
 
-  console.log("🔌 Connecting to Discord Gateway via Cloudflare WebSockets...");
+  broadcastLog("🔌 [Gateway Connection] Initiating outbound WebSocket client to Discord...");
   
-  // Create a WebSocket connection using Cloudflare's outbound WebSocket feature
   const resp = await fetch(gatewayUrl, {
     headers: {
       "Upgrade": "websocket",
@@ -77,11 +130,9 @@ async function establishDiscordConnection(env, ctx) {
 
   const ws = resp.webSocket;
   if (!ws) {
-    throw new Error("Cloudflare failed to upgrade connection to WebSocket.");
+    throw new Error("Outbound socket upgrade failed. Verify Cloudflare Worker permissions.");
   }
 
-  // CRITICAL FIX: Removed ws.accept() since this is an outbound CLIENT socket.
-  // Calling accept() here was causing immediate script termination on Cloudflare.
   globalWebSocket = ws;
 
   ws.addEventListener("message", async (event) => {
@@ -92,27 +143,27 @@ async function establishDiscordConnection(env, ctx) {
       if (s) sequenceNumber = s;
 
       switch (op) {
-        case 10: // Hello Event
+        case 10: // Hello
           const heartbeatMs = d.heartbeat_interval;
           startHeartbeat(ws, heartbeatMs);
           identifyConnection(ws, token);
           break;
 
         case 11: // Heartbeat ACK
-          console.log("💓 Heartbeat acknowledged by Discord.");
+          broadcastLog("💓 [Heartbeat] Discord acknowledged gateway health check.");
           break;
 
-        case 0: // Dispatch Event
+        case 0: // Dispatch
           if (t === "READY") {
             sessionId = d.session_id;
-            console.log(`🤖 Logged in as ${d.user.username} via Cloudflare!`);
+            broadcastLog(`🤖 [Success] Discord validated gateway. Bot is online!`);
           } else if (t === "MESSAGE_CREATE") {
             ctx.waitUntil(handleMessageCreate(d, env, d.user.id));
           }
           break;
 
         case 9: // Invalid Session
-          console.warn("⚠️ Invalid Session. Reconnecting...");
+          broadcastLog("⚠️ [Gateway Warning] Session flagged as invalid. Reconnecting...");
           ws.close();
           break;
       }
@@ -122,7 +173,7 @@ async function establishDiscordConnection(env, ctx) {
   });
 
   ws.addEventListener("close", (e) => {
-    console.log(`🔴 WebSocket disconnected: ${e.reason} (${e.code})`);
+    broadcastLog(`🔴 [Disconnect] Socket closed by remote host: ${e.reason} (Code: ${e.code})`);
     clearInterval(heartbeatInterval);
   });
 }
@@ -153,7 +204,7 @@ function identifyConnection(ws, token) {
 }
 
 /**
- * Handle incoming message creations just like your local PC did!
+ * Handle incoming message creations
  */
 async function handleMessageCreate(message, env, botUserId) {
   if (message.author.bot) return;
@@ -164,10 +215,9 @@ async function handleMessageCreate(message, env, botUserId) {
   const isReplyToBot = message.referenced_message && message.referenced_message.author.id === botUserId;
 
   if (isMentioned || isReplyToBot) {
-    // Fetch member and displayName safely
     const username = message.member?.nick || message.author.global_name || message.author.username;
     
-    // Resolve clean badges
+    // Resolve tags
     const badges = [];
     if (message.author.id === DEVELOPER_USER_ID) {
       badges.push("Developer & AI Creator");
@@ -184,9 +234,8 @@ async function handleMessageCreate(message, env, botUserId) {
     const badgeSuffix = badges.length > 0 ? ` [${badges.join('/')}]` : "";
     const finalFormattedName = `${username}${badgeSuffix}`;
 
-    console.log(`💬 forwarding direct trigger to main brain: ${finalFormattedName}`);
+    broadcastLog(`💬 [Forwarding Message] "${message.content}" from user: ${finalFormattedName}`);
 
-    // Clean mention content
     let cleanPrompt = message.content
       .replace(botMention, "")
       .replace(nicknameMention, "")
@@ -198,7 +247,6 @@ async function handleMessageCreate(message, env, botUserId) {
     }
 
     try {
-      // Trigger a raw fetch back to your Main Worker!
       const response = await fetch(env.WORKER_URL, {
         method: "POST",
         headers: {
@@ -217,18 +265,21 @@ async function handleMessageCreate(message, env, botUserId) {
       if (response.ok) {
         const data = await response.json();
         if (data.response) {
+          broadcastLog(`✨ [Responding] AI Main Brain: "${data.response.substring(0, 50)}..."`);
           await sendReply(message.channel_id, message.id, data.response, env);
         }
+      } else {
+        broadcastLog(`❌ [AI Error] Main Brain Worker status code: ${response.status}`);
       }
     } catch (err) {
-      console.error("Failed to forward to AI Worker:", err);
+      broadcastLog(`❌ [API Fail] Could not fetch to main Worker: ${err.message}`);
     }
   }
 }
 
 async function sendReply(channelId, messageId, content, env) {
   const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
-  await fetch(url, {
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       "Authorization": `Bot ${env.DISCORD_TOKEN}`,
@@ -241,4 +292,184 @@ async function sendReply(channelId, messageId, content, env) {
       }
     })
   });
+  if (!res.ok) {
+    broadcastLog(`❌ [Discord Reply Error] Failed sending message: ${res.status}`);
+  }
+}
+
+/**
+ * Returns a beautiful modern dark theme HTML page with automatic live console streaming
+ */
+function getTerminalHTML() {
+  return `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AstralyxAI - Core Control Console</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        background-color: #0d1117;
+        font-family: 'Courier New', Courier, monospace;
+        color: #c9d1d9;
+        display: flex;
+        flex-direction: column;
+        height: 90vh;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid #30363d;
+        padding-bottom: 15px;
+        margin-bottom: 15px;
+      }
+      .logo {
+        font-size: 24px;
+        font-weight: bold;
+        color: #ff9800;
+        text-shadow: 0 0 8px rgba(255, 152, 0, 0.4);
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background-color: #ff9800;
+        box-shadow: 0 0 8px #ff9800;
+      }
+      .dot.online {
+        background-color: #2ea043;
+        box-shadow: 0 0 8px #2ea043;
+      }
+      .dot.offline {
+        background-color: #f85149;
+        box-shadow: 0 0 8px #f85149;
+      }
+      .terminal {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        flex-grow: 1;
+        padding: 15px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .line {
+        margin-bottom: 6px;
+        border-left: 2px solid transparent;
+        padding-left: 8px;
+      }
+      .system { color: #58a6ff; }
+      .success { color: #56d364; }
+      .error { color: #f85149; }
+      .message { color: #ff7b72; }
+      .timestamp { color: #8b949e; margin-right: 8px; }
+      .footer {
+        margin-top: 15px;
+        display: flex;
+        justify-content: space-between;
+        color: #8b949e;
+        font-size: 12px;
+      }
+      .btn {
+        background-color: #21262d;
+        border: 1px solid #30363d;
+        color: #c9d1d9;
+        padding: 5px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .btn:hover {
+        background-color: #30363d;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="logo">⚡ AstralyxAI Core Console</div>
+      <div class="status">
+        <div id="statusDot" class="dot"></div>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </div>
+    <div id="terminal" class="terminal"></div>
+    <div class="footer">
+      <div>Platform: Cloudflare Serverless Engine</div>
+      <button class="btn" onclick="clearConsole()">Clear Console</button>
+    </div>
+
+    <script>
+      const terminal = document.getElementById("terminal");
+      const statusDot = document.getElementById("statusDot");
+      const statusText = document.getElementById("statusText");
+
+      function appendLog(text) {
+        const line = document.createElement("div");
+        line.className = "line";
+
+        // Simple formatting helper
+        if (text.includes("[Gateway System]")) {
+          line.classList.add("system");
+        } else if (text.includes("[Success]") || text.includes("🟢") || text.includes("✨")) {
+          line.classList.add("success");
+        } else if (text.includes("❌") || text.includes("🔴")) {
+          line.classList.add("error");
+        } else if (text.includes("💬")) {
+          line.classList.add("message");
+        }
+
+        line.textContent = text;
+        terminal.appendChild(line);
+        terminal.scrollTop = terminal.scrollHeight;
+      }
+
+      function clearConsole() {
+        terminal.innerHTML = "";
+        appendLog("[System] Console cleared.");
+      }
+
+      function startStream() {
+        statusDot.className = "dot";
+        statusText.textContent = "Connecting stream...";
+        
+        const eventSource = new EventSource("/connect/stream");
+
+        eventSource.onopen = () => {
+          statusDot.className = "dot online";
+          statusText.textContent = "Gateway Stream Connected";
+          appendLog("[System] EventSource active. Connection pre-warmed.");
+        };
+
+        eventSource.onmessage = (event) => {
+          appendLog(event.data);
+        };
+
+        eventSource.onerror = (error) => {
+          statusDot.className = "dot offline";
+          statusText.textContent = "Stream Disconnected (Reconnecting...)";
+          eventSource.close();
+          // Auto reconnect after 3 seconds
+          setTimeout(startStream, 3000);
+        };
+      }
+
+      // Start SSE log streaming when loading page
+      startStream();
+    </script>
+  </body>
+  </html>
+  `;
 }
