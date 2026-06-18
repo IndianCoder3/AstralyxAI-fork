@@ -1,16 +1,14 @@
 /**
- * AstralyxPvP Discord AI Gateway Bridge - Full Stable Hugging Face Edition
- * Combines 24/7 self-healing bootloader with local role-resolution metadata.
+ * AstralyxPvP Discord AI Gateway Bridge - Render Optimized Edition
+ * Optimized for Render.com platform deployment.
  */
 
 import { Client, GatewayIntentBits } from 'discord.js';
 import fetch from 'node-fetch';
-import http from 'http';
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const WORKER_URL = process.env.WORKER_URL; 
 const GATEWAY_SECRET = process.env.GATEWAY_SECRET; 
-const PORT = process.env.PORT || 7860;
 
 const client = new Client({
   intents: [
@@ -19,13 +17,6 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
-
-// Mandatory Hugging Face Health Check
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('Astralyx Gateway Online');
-});
-server.listen(PORT);
 
 const ROLE_MAP = [
   { id: '1477025238784151554', tag: 'Owner' },
@@ -107,16 +98,16 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// Self-healing startup logic with exponential backoff
-async function startBot(attempt = 1) {
+// Render-optimized startup logic
+async function startBot() {
   try {
-    console.log(`🚀 Attempting login to Discord (Attempt ${attempt})...`);
+    console.log("🚀 Logging into Discord on Render...");
     await client.login(DISCORD_TOKEN);
-    console.log("✅ Bot connected successfully!");
+    console.log("✅ Bot is live and connected!");
   } catch (e) {
-    const delay = Math.min(Math.pow(2, attempt) * 1000, 30000); // 2s, 4s, 8s, up to 30s
-    console.error(`❌ Login failed: ${e.message}. Retrying in ${delay / 1000}s...`);
-    setTimeout(() => startBot(attempt + 1), delay);
+    console.error("❌ Critical Startup Error:", e);
+    // Render will automatically restart the process if we exit with code 1
+    process.exit(1); 
   }
 }
 
