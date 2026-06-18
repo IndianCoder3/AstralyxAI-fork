@@ -1,7 +1,7 @@
 /**
  * AstralyxPvP Discord AI Gateway Bridge
  * Run this on any 24/7 machine (your PC, home server, or VPS).
- * It listens to direct @mentions in Discord and safely forwards them to your Cloudflare Worker!
+ * It listens to direct @mentions and direct replies in Discord and safely forwards them to your Cloudflare Worker!
  */
 
 import { Client, GatewayIntentBits } from 'discord.js';
@@ -29,7 +29,7 @@ const client = new Client({
 
 client.once('ready', () => {
   console.log(`🤖 SUCCESS: Gateway Bridge is online! Logged in as: ${client.user.tag}`);
-  console.log(`🔗 Forwarding mentions securely to: ${WORKER_URL}`);
+  console.log(`🔗 Forwarding mentions and replies securely to: ${WORKER_URL}`);
 });
 
 client.on('messageCreate', async (message) => {
@@ -39,19 +39,26 @@ client.on('messageCreate', async (message) => {
   // Check if the message contains a direct mention to this bot
   const botMention = `<@${client.user.id}>`;
   const nicknameMention = `<@!${client.user.id}>`;
+  
+  const isMentioned = message.content.includes(botMention) || message.content.includes(nicknameMention);
 
-  if (message.content.includes(botMention) || message.content.includes(nicknameMention)) {
-    console.log(`💬 Mention received in #${message.channel.name} from ${message.author.username}`);
+  // Check if this message is a direct reply to one of the bot's own messages
+  const isReplyToBot = message.reference && message.mentions.repliedUser?.id === client.user.id;
+
+  if (isMentioned || isReplyToBot) {
+    const userDisplayName = message.member?.displayName || message.author.displayName || message.author.username;
+    console.log(`💬 AI Triggered in #${message.channel.name} by ${userDisplayName} (Reason: ${isReplyToBot ? 'Reply' : 'Mention'})`);
 
     try {
-      // Clean the mention out of the text content
+      // Clean the mention out of the text content if it exists
       let cleanPrompt = message.content
         .replace(botMention, "")
         .replace(nicknameMention, "")
         .trim();
 
       if (!cleanPrompt) {
-        message.reply("Hey! What can I help you with today? (Usage: `@AstralyxAI <your prompt>`)");
+        // If they just pinged/replied with nothing, give a helper hint
+        message.reply(`Hey ${userDisplayName}! What can I help you with today? (Usage: Reply to me, or type \`@AstralyxAI <your prompt>\`)`);
         return;
       }
 
@@ -69,14 +76,14 @@ client.on('messageCreate', async (message) => {
           prompt: cleanPrompt,
           channelId: message.channel.id,
           userId: message.author.id,
-          username: message.author.username
+          username: userDisplayName // Passes friendly server nickname/display name!
         })
       });
 
       if (response.ok) {
         const data = await response.json();
         if (data.response) {
-          // Reply directly to the user's mention on Discord
+          // Reply directly to the user's message on Discord
           await message.reply(data.response);
         } else {
           await message.reply("⚠️ Received an empty response from the Cloudflare brain.");

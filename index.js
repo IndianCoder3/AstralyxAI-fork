@@ -1,12 +1,19 @@
 /**
  * AstralyxPvP Discord AI Bot - Self-Healing, Fully Logged Worker
- * Added support for a lightweight Gateway Bridge connection via a Shared Secret.
+ * Fixed third-person addressing bug by introducing strict direct-response system instructions.
  */
 
 import { verifyKey } from 'discord-interactions';
 
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 const DEFAULT_SYSTEM_PROMPT = `You are the official AI mascot for AstralyxPvP, a competitive Minecraft PvP server. 
+
+⚠️ CRITICAL INSTRUCTION ON HOW TO ADDRESS USERS:
+- You will receive incoming messages formatted as: "(Username): message".
+- You must always respond DIRECTLY to that user in the second person ("you", "your").
+- NEVER speak about the user in the third person! For example, if you receive "(sussyindian3): Hey!", do NOT say "Tell sussyindian3 I said what's up" or "Tell him...". Instead, respond directly: "Hey sussyindian3! What's up!" or "What's up! Ready to hit the arena?"
+- Treat the username in the parentheses as the person you are currently looking at and talking to face-to-face.
+
 You are friendly, competitive, and highly knowledgeable about Minecraft PvP mechanics including:
 - Sword FFA (spacing, timing, critical hits, block-hitting)
 - Mace FFA (wind charges, high-ground setups, smash attacks)
@@ -113,8 +120,8 @@ async function handleGatewayForward(request, env) {
       }
     }
 
-    // Append new message formatted nicely
-    const cleanPrompt = `User ${username} says: "${prompt}"`;
+    // Use direct "(Username): prompt" formatting to make it clear who is speaking
+    const cleanPrompt = `(${username}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 12) {
@@ -149,6 +156,9 @@ async function handleApplicationCommand(interaction, env, ctx) {
 
   console.log(`🤖 Command Triggered: /${name} (Type: ${commandType}) by User ID: ${userId} in Channel: ${channelId}`);
 
+  // Fetch friendly display name for formatting
+  const username = interaction.member?.nick || interaction.member?.user?.global_name || interaction.member?.user?.username || interaction.user?.username || "Player";
+
   // Handle Context Menu commands (Type 3 is MESSAGE context command)
   if (commandType === 3 && name === 'Reply with AI') {
     const targetId = interaction.data.target_id;
@@ -168,8 +178,9 @@ async function handleApplicationCommand(interaction, env, ctx) {
     localRateLimits.set(userId, now);
 
     // Defer response to avoid Discord 3-second timeout limits
+    const authorName = targetMessage.author?.global_name || targetMessage.author?.username || "Player";
     ctx.waitUntil(
-      handleDeferredChat(interaction, userPrompt, channelId, userId, env, true, targetMessage.author?.username)
+      handleDeferredChat(interaction, userPrompt, channelId, userId, env, true, authorName)
     );
 
     return jsonResponse({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
@@ -207,7 +218,7 @@ async function handleApplicationCommand(interaction, env, ctx) {
 
       // Defer response to avoid Discord 3-second timeout limits
       ctx.waitUntil(
-        handleDeferredChat(interaction, userPrompt, channelId, userId, env, false)
+        handleDeferredChat(interaction, userPrompt, channelId, userId, env, false, username)
       );
 
       return jsonResponse({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
@@ -306,9 +317,10 @@ async function handleDeferredChat(interaction, prompt, channelId, userId, env, i
       }
     }
 
-    let cleanPrompt = prompt;
+    // Always keep standard direct format: (Name): prompt
+    let cleanPrompt = `(${originalAuthor}): ${prompt}`;
     if (isContextMenu) {
-      cleanPrompt = `Reply to the following message sent by ${originalAuthor || 'another user'}: "${prompt}"`;
+      cleanPrompt = `(${originalAuthor} - replying to their message): ${prompt}`;
     }
 
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
@@ -329,7 +341,7 @@ async function handleDeferredChat(interaction, prompt, channelId, userId, env, i
 
     let finalContent = "";
     if (isContextMenu) {
-      finalContent = `💬 **Replying to ${originalAuthor ? `**${originalAuthor}**` : 'Message'}:** *"${prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt}"*\n\n${aiResponse}`;
+      finalContent = `💬 **Replying to **${originalAuthor}**:** *"${prompt.length > 80 ? prompt.substring(0, 80) + '...' : prompt}"*\n\n${aiResponse}`;
     } else {
       finalContent = `💬 **<@${userId}>:** ${prompt.length > 150 ? prompt.substring(0, 150) + '...' : prompt}\n\n${aiResponse}`;
     }
