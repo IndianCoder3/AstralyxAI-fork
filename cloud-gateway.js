@@ -148,6 +148,8 @@ async function establishDiscordConnection(env, ctx) {
     throw new Error("Outbound socket upgrade failed. Verify Cloudflare Worker permissions.");
   }
 
+  // REQUIRED FOR OUTBOUND WEBSOCKET CLOUDFLARE CLIENTS
+  ws.accept();
   globalWebSocket = ws;
 
   ws.addEventListener("message", (event) => {
