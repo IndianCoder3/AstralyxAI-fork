@@ -166,9 +166,9 @@ async function handleGatewayForward(request, env) {
       }
     }
 
-     // Format prompt cleanly as (Username [Ranks]): prompt
-     const cleanPrompt = prompt;
-     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
+    // Format prompt cleanly as (Username [Ranks]): prompt
+    const cleanPrompt = `(${username}): ${prompt}`;
+    conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 12) {
       conversationHistory = conversationHistory.slice(conversationHistory.length - 12);
@@ -330,7 +330,7 @@ async function handleDeferredChat(interaction, prompt, channelId, userId, env, i
       }
     }
 
-    const cleanPrompt = prompt;
+    const cleanPrompt = `(${originalAuthor}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 12) {
@@ -345,7 +345,7 @@ async function handleDeferredChat(interaction, prompt, channelId, userId, env, i
       await env.CHAT_HISTORY.put(historyKey, JSON.stringify(conversationHistory), { expirationTtl: 86400 });
     }
 
-    const finalContent = aiResponse;
+    const finalContent = `💬 **<@${userId}>:** ${prompt.length > 150 ? prompt.substring(0, 150) + '...' : prompt}\n\n${aiResponse}`;
 
     await fetch(patchUrl, {
       method: 'PATCH',

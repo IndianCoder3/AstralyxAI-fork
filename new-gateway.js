@@ -4,7 +4,7 @@
  */
 
 import { Client, GatewayIntentBits } from 'discord.js';
-import fetch from 'node-fetch'; 
+import fetch from 'node-fetch';
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const WORKER_URL = process.env.WORKER_URL; 
@@ -23,14 +23,14 @@ const ROLE_MAP = [
   { id: '1477291491003994214', tag: 'Co-Owner' },
   { id: '1502815102716608552', tag: 'Chief Manager' },
   { id: '1497335106074050620', tag: 'Sr. Manager' },
-  { id: '1483209618485284963', tag: 'Manager' },
+  { id: '1483209618485284964', tag: 'Manager' },
   { id: '1498734182615089314', tag: 'Head of General Affairs' },
   { id: '1498734243352678630', tag: 'Head of Internal Affairs' },
   { id: '1497316294632931358', tag: 'Developer' },
   { id: '1497316250945323070', tag: 'Admin' },
   { id: '1497316120452136960', tag: 'Sr. Mod' },
   { id: '1477025502119334109', tag: 'Mod' },
-  { id: '1477316057214484735', tag: 'Jr. Mod' },
+  { id: '1497316057214484735', tag: 'Jr. Mod' },
   { id: '1477025528174219476', tag: 'Helper' },
   { id: '1501217374102229185', tag: 'Trial Staff' },
   { id: '1511596382706991144', tag: 'Veteran (Ex-Staff)' },
