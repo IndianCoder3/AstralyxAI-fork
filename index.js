@@ -464,7 +464,9 @@ async function generateGeminiContent(contents, env) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL || GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
   // Tools manifest definition matching structural spec
-  const tools = [{
+  const tools = [
+    { googleSearch: {} },
+    {
     functionDeclarations: [
       {
         name: "get_leaderboard",
@@ -500,7 +502,8 @@ async function generateGeminiContent(contents, env) {
         description: "Check whether the Astralyx Minecraft server is online and retrieve the current player count."
       }
     ]
-  }];
+  }
+  ];
 
   let currentContents = [...contents];
 
@@ -573,7 +576,23 @@ async function generateGeminiContent(contents, env) {
 
     // Return standard text response once no calls are remaining
     const responseText = parts.find(p => p.text)?.text;
-    return responseText || "I couldn't process that request.";
+    if (!responseText) return "I couldn't process that request.";
+
+    // Append Google Search grounding citations if present
+    const groundingMeta = candidate?.groundingMetadata;
+    const chunks = groundingMeta?.groundingChunks;
+    if (chunks && chunks.length > 0) {
+      const sources = chunks
+        .filter(c => c.web?.uri && c.web?.title)
+        .slice(0, 3)
+        .map((c, i) => `[${i + 1}] [${c.web.title}](${c.web.uri})`)
+        .join('\n');
+      if (sources) {
+        return `${responseText}\n\n🔍 **Sources:**\n${sources}`;
+      }
+    }
+
+    return responseText;
   }
 
   throw new Error("Maximum function resolution loop limit exceeded.");
