@@ -206,6 +206,54 @@ async function toolGetPlayerStats(player) {
   }
 }
 
+function cleanHtml(html) {
+  // Remove scripts, styles, nav, footer, header, ads
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<aside[\s\S]*?<\/aside>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    // Strip all remaining HTML tags
+    .replace(/<[^>]+>/g, ' ')
+    // Decode common HTML entities
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    // Collapse whitespace and blank lines
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  // Trim to ~3000 chars so Gemini doesn't choke
+  if (text.length > 3000) text = text.slice(0, 3000) + '... [truncated]';
+  return text;
+}
+
+async function fetchPageContent(url) {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; AstralyxBot/1.0)',
+        'Accept': 'text/html'
+      },
+      // 5 second timeout via signal
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('text/html')) return null;
+    const html = await res.text();
+    return cleanHtml(html);
+  } catch (e) {
+    return null;
+  }
+}
+
 async function toolSearchWeb(query, env) {
   try {
     const apiKey = env.SERPER_API_KEY;
@@ -220,12 +268,32 @@ async function toolSearchWeb(query, env) {
     });
     if (!res.ok) throw new Error(`Search API error: ${res.status}`);
     const data = await res.json();
-    const results = (data.organic || []).slice(0, 5).map(item => ({
+    const organic = (data.organic || []).slice(0, 5);
+    if (organic.length === 0) return { results: [], message: "No results found." };
+
+    // Try to fetch full content from top result
+    const top = organic[0];
+    const pageContent = await fetchPageContent(top.link);
+
+    const results = organic.map(item => ({
       title: item.title,
       snippet: item.snippet,
       link: item.link
     }));
-    if (results.length === 0) return { results: [], message: "No results found." };
+
+    if (pageContent) {
+      return {
+        query,
+        top_result: {
+          title: top.title,
+          link: top.link,
+          full_content: pageContent
+        },
+        other_results: results.slice(1)
+      };
+    }
+
+    // Fallback to snippets if fetch failed
     return { query, results };
   } catch (e) {
     return { error: e.message };
