@@ -254,4 +254,4 @@ You should see all 7 commands registered successfully.
 Built by **IndianCoder3** ([@IndianCoder3](https://github.com/IndianCoder3)) for **AstralyxPvP**  
 Part of the **NebulaGames** dev team alongside DreamLong and Frostrax.
 
-> Coded entirely from a phone. No PC. No excuses. 🫡
+> Coded mostly from a phone. No PC. No excuses. 🫡
