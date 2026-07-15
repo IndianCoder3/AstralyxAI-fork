@@ -593,7 +593,18 @@ async function handleDeferredChat(interaction, prompt, channelId, userId, env, i
       }
     }
 
-    const cleanPrompt = `(${originalAuthor}): ${prompt}`;
+    const nowGMT = new Date().toLocaleString("en-GB", {
+      timeZone: "UTC",
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+    const cleanPrompt = `[System: Current time is ${nowGMT} GMT. If the user asks about time, ask for their timezone first, then calculate and respond in their local time using this GMT reference.]\n(${originalAuthor}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 20) {
