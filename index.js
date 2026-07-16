@@ -115,7 +115,193 @@ export default {
   async fetch(request, env, ctx) {
     try {
       if (request.method !== 'POST') {
-        return jsonResponse({ status: 'ok', message: 'Astralyx AI Bot is online.' }, 200);
+        const model = env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
+        const nowGMT = new Date().toUTCString();
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AstralyxAI — Status</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #060203;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: #110608;
+    border: 1px solid #C8102E33;
+    border-radius: 16px;
+    padding: 32px 28px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 0 40px #C8102E22;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .logo-icon {
+    width: 44px;
+    height: 44px;
+    background: #C8102E;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+  }
+  .logo-text h1 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .logo-text p {
+    font-size: 12px;
+    color: #888;
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #0a2a0a;
+    border: 1px solid #00C85388;
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: #00C853;
+    font-weight: 600;
+    margin-bottom: 24px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    background: #00C853;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .info-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: #1a0608;
+    border-radius: 10px;
+    border: 1px solid #C8102E1a;
+  }
+  .info-label {
+    font-size: 12px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .info-value {
+    font-size: 13px;
+    color: #FFD700;
+    font-weight: 600;
+  }
+  .divider {
+    border: none;
+    border-top: 1px solid #C8102E22;
+    margin: 20px 0;
+  }
+  .footer {
+    text-align: center;
+    font-size: 11px;
+    color: #444;
+    line-height: 1.6;
+  }
+  .footer a {
+    color: #C8102E;
+    text-decoration: none;
+  }
+  .tag {
+    display: inline-block;
+    background: #C8102E22;
+    color: #C8102E;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div class="logo-icon">🤖</div>
+    <div class="logo-text">
+      <h1>AstralyxAI</h1>
+      <p>Discord AI Bot · AstralyxPvP</p>
+    </div>
+  </div>
+
+  <div class="status-badge">
+    <div class="dot"></div>
+    All Systems Operational
+  </div>
+
+  <div class="info-grid">
+    <div class="info-row">
+      <span class="info-label">Status</span>
+      <span class="info-value">✅ Online</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">AI Model</span>
+      <span class="info-value">${model}</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Runtime</span>
+      <span class="info-value">Cloudflare Workers</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Server Time (GMT)</span>
+      <span class="info-value">${nowGMT}</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Search</span>
+      <span class="info-value">✅ Serper + Jina</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Knowledge Base</span>
+      <span class="info-value">✅ D1 Connected</span>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <div class="footer">
+    Built by <a href="https://github.com/IndianCoder3" target="_blank">IndianCoder3</a> · 
+    <a href="https://astralyxpvp.pages.dev" target="_blank">AstralyxPvP</a><br>
+    <span class="tag">Coded on a phone 📱</span>
+  </div>
+</div>
+</body>
+</html>`;
+        return new Response(html, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html;charset=UTF-8' }
+        });
       }
 
       const authHeader = request.headers.get('authorization');
