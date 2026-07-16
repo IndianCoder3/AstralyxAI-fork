@@ -91,6 +91,7 @@ If no special role is present, treat them as a regular Member.
 # FORMATTING RULES
 - Discord Markdown only: **bold**, *italic*, \`code\`, bullet lists. No raw HTML ever.
 - Links: use [label](url) format only.
+- NEVER wrap channel mentions in backticks or any formatting. Always write them raw like <#1477032862892163113> so Discord renders them clickable. Never do #support `<#id>` or `<#id>` — just raw <#id>.
 - Responses should be detailed, warm, and helpful. Use the full space available.
 - Hard limit: 1900 characters per response. Only truncate if absolutely necessary.
 
@@ -604,7 +605,7 @@ async function handleDeferredChat(interaction, prompt, channelId, userId, env, i
       second: "2-digit",
       hour12: false
     });
-    const cleanPrompt = `[System: Current time is ${nowGMT} GMT. If the user asks about time, ask for their timezone first, then calculate and respond in their local time using this GMT reference.]\n(${originalAuthor}): ${prompt}`;
+    const cleanPrompt = `[System: Current time is ${nowGMT} GMT. Common timezone offsets: IST=GMT+5:30, GST=GMT+4, EST=GMT-5, PST=GMT-8, CET=GMT+1, JST=GMT+9, AEST=GMT+10, PKT=GMT+5, BST=GMT+6. If the user mentions a known timezone by name, calculate directly without asking. Only ask for timezone if genuinely ambiguous.]\n(${originalAuthor}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 20) {
