@@ -620,8 +620,13 @@ async function handleGatewayForward(request, env) {
       }
     }
 
-    // Format prompt cleanly as (Username [Ranks]): prompt
-    const cleanPrompt = `(${username}): ${prompt}`;
+    // Format prompt with timestamp (same as slash command path)
+    const nowGMT = new Date().toLocaleString("en-GB", {
+      timeZone: "UTC",
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+    });
+    const cleanPrompt = `[System: Current time is ${nowGMT} GMT. If the user asks about time, ask for their timezone first, then calculate and respond in their local time using this GMT reference.]\n(${username}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 20) {
@@ -638,7 +643,26 @@ async function handleGatewayForward(request, env) {
       await env.CHAT_HISTORY.put(historyKey, JSON.stringify(conversationHistory), { expirationTtl: 86400 });
     }
 
-    return jsonResponse({ response: aiResponse });
+    // Send reply directly via Discord API using main bot token
+    const { replyToMessageId } = payload;
+    const discordUrl = `https://discord.com/api/v10/channels/${channelId}/messages`;
+    const discordBody = {
+      content: `💬 **<@${userId}>:** ${prompt.length > 150 ? prompt.substring(0, 150) + '...' : prompt}\n\n${aiResponse}`
+    };
+    if (replyToMessageId) {
+      discordBody.message_reference = { message_id: replyToMessageId };
+    }
+
+    await fetch(discordUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bot ${env.DISCORD_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(discordBody)
+    });
+
+    return jsonResponse({ ok: true });
 
   } catch (err) {
     console.error("Gateway processing failed:", err);
