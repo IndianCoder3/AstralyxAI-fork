@@ -5,7 +5,8 @@
  */
 
 import { verifyKey } from 'discord-interactions';
-
+// Target channel for automatic AI responses
+const AUTO_CHAT_CHANNEL_ID = "1507631887957627000";
 const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
 const API_BASE = "https://astralyxpvp.chessmrbeaston.workers.dev/api/";
 
@@ -581,16 +582,29 @@ async function toolGetServerStatus() {
  */
 async function handleGatewayForward(request, env) {
   try {
+    // 1. Read payload first
     const payload = await request.json();
-    const { prompt, channelId, userId, username, roleIds } = payload;
+    const { prompt, channelId, userId, username, roleIds, isBot, bot } = payload;
 
+    // 2. Validate parameters
     if (!prompt || !channelId || !userId) {
       return jsonResponse({ error: 'Missing parameters' }, 400);
     }
 
-    console.log(`📡 [Gateway Forward] Prompt from ${username} (${userId})`);
+    // 3. Target Channel Check
+    const AUTO_CHAT_CHANNEL_ID = "1507631887957627000";
+    if (channelId !== AUTO_CHAT_CHANNEL_ID) {
+      return jsonResponse({ ok: true, message: "Ignored non-target channel message" });
+    }
 
-    // Guard Check: Is Banned?
+    // 4. Bot Check
+    if (isBot || bot || userId === env.DISCORD_BOT_USER_ID) {
+      return jsonResponse({ ok: true, message: "Ignored bot message" });
+    }
+
+    console.log(`📡 [Auto-Chat Forward] Prompt from ${username} (${userId}) in channel ${channelId}`);
+
+    // Guard Check: Is User Banned?
     let isBanned = false;
     if (env.CHAT_HISTORY) {
       isBanned = await env.CHAT_HISTORY.get(`banned:${userId}`);
@@ -621,35 +635,52 @@ async function handleGatewayForward(request, env) {
       }
     }
 
-    // Format prompt with timestamp (same as slash command path)
+    // Format prompt with roles and timestamp
     const nowGMT = new Date().toLocaleString("en-GB", {
       timeZone: "UTC",
       weekday: "long", year: "numeric", month: "long", day: "numeric",
       hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
     });
-    const cleanPrompt = `[System: Current time is ${nowGMT} GMT. If the user asks about time, ask for their timezone first, then calculate and respond in their local time using this GMT reference.]\n(${username}): ${prompt}`;
+
+    // Format sender identity with roles
+    const resolvedBadges = [];
+    if (userId === DEVELOPER_USER_ID) {
+      resolvedBadges.push("Developer & AI Creator");
+    }
+    if (Array.isArray(roleIds)) {
+      for (const roleId of roleIds) {
+        const found = ROLE_HIERARCHY.find(r => r.id === roleId);
+        if (found && !resolvedBadges.includes(found.tag)) {
+          resolvedBadges.push(found.tag);
+        }
+      }
+    }
+    const formattedSenderName = resolvedBadges.length > 0 ? `${username} [${resolvedBadges.join('/')}]` : username;
+
+    const cleanPrompt = `[System: Current time is ${nowGMT} GMT. If the user asks about time, calculate based on GMT reference.]\n(${formattedSenderName}): ${prompt}`;
     conversationHistory.push({ role: 'user', parts: [{ text: cleanPrompt }] });
 
     if (conversationHistory.length > 20) {
       conversationHistory = conversationHistory.slice(conversationHistory.length - 20);
     }
 
-    // Fetch from Gemini with Native Tool executions embedded within helper
+    // Fetch from Gemini AI
     const aiResponse = await generateGeminiContent(conversationHistory, env);
 
-    // Store history
+    // Store updated history
     if (env.CHAT_HISTORY) {
       const historyKey = `history:${channelId}`;
       conversationHistory.push({ role: 'model', parts: [{ text: aiResponse }] });
       await env.CHAT_HISTORY.put(historyKey, JSON.stringify(conversationHistory), { expirationTtl: 86400 });
     }
 
-    // Send reply directly via Discord API using main bot token
+    // Reply directly back to the channel
     const { replyToMessageId } = payload;
     const discordUrl = `https://discord.com/api/v10/channels/${channelId}/messages`;
     const discordBody = {
-      content: `💬 **<@${userId}>:** ${prompt.length > 150 ? prompt.substring(0, 150) + '...' : prompt}\n\n${aiResponse}`
+      content: aiResponse
     };
+
     if (replyToMessageId) {
       discordBody.message_reference = { message_id: replyToMessageId };
     }
@@ -667,7 +698,7 @@ async function handleGatewayForward(request, env) {
 
   } catch (err) {
     console.error("Gateway processing failed:", err);
-    return jsonResponse({ response: "⚠️ Failed to process your message in the Cloudflare backend." }, 500);
+    return jsonResponse({ response: "⚠️ Failed to process auto-chat message in backend." }, 500);
   }
 }
 
@@ -734,8 +765,34 @@ async function handleApplicationCommand(interaction, env, ctx) {
       });
     }
 
+case 'link': {
+      const username = options?.find(opt => opt.name === 'username')?.value;
+      const code = options?.find(opt => opt.name === 'code')?.value;
+
+      if (!username || !code) return ephemeralResponse("Please provide both username and link code.");
+
+      ctx.waitUntil(handleDeferredLink(interaction, username, code, userId, env));
+      return jsonResponse({ type: 5, data: { flags: 64 } }); // Ephemeral deferred response
+    }
+
     case 'lb': {
-      const gamemode = options?.find(opt => opt.name === 'gamemode')?.value || 'swordffa1';
+      let gamemode = options?.find(opt => opt.name === 'gamemode')?.value;
+      
+      // Fetch default gamemode dynamically if user didn't specify one
+      if (!gamemode) {
+        try {
+          const gmRes = await fetch(`${API_BASE}?gamemodes=true`);
+          if (gmRes.ok) {
+            const gmData = await gmRes.json();
+            if (Array.isArray(gmData?.gamemodes) && gmData.gamemodes.length > 0) {
+              gamemode = gmData.gamemodes[0].toLowerCase();
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (!gamemode) gamemode = 'swordffa1';
+
       ctx.waitUntil(handleDeferredLeaderboard(interaction, gamemode, env));
       return jsonResponse({ type: 5 });
     }
@@ -1176,4 +1233,48 @@ function jsonResponse(data, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' }
   });
+}
+/**
+ * Deferred Handler for Account Linking (/link)
+ */
+async function handleDeferredLink(interaction, username, code, discordId, env) {
+  const applicationId = interaction.application_id;
+  const patchUrl = `https://discord.com/api/v10/webhooks/${applicationId}/${interaction.token}/messages/@original`;
+
+  try {
+    const cleanUser = username.toLowerCase().trim();
+    const cleanCode = code.trim();
+    const authPass = env.AUTH_PASSWORD
+
+    // Include auth password in query URL (or via headers)
+    const url = `${API_BASE}?username=${encodeURIComponent(cleanUser)}&hashedCode=${encodeURIComponent(cleanCode)}&discordId=${encodeURIComponent(discordId)}&auth=${encodeURIComponent(authPass)}`;
+
+    const res = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${authPass}` // Sent via header as well for compatibility
+      }
+    });
+    
+    const data = await res.json();
+
+    let replyMessage = '❌ System error during account mapping verification.';
+    if (data.status === 'success' && data.found) {
+      replyMessage = `✅ **Successfully Linked!** Your Discord account is now linked to **${data.username}**.`;
+    } else {
+      replyMessage = '❌ **Link Failed:** Code is invalid or has expired.';
+    }
+
+    await fetch(patchUrl, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: replyMessage })
+    });
+
+  } catch (error) {
+    await fetch(patchUrl, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `❌ Linking Error: ${error.message}` })
+    });
+  }
 }
