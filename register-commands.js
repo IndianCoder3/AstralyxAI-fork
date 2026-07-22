@@ -77,6 +77,24 @@ const commands = [
       },
     ],
   },
+  {
+    name: 'link',
+    description: 'Link your Minecraft account to Discord',
+    options: [
+      {
+        name: 'username',
+        description: 'Your Minecraft username',
+        type: 3,
+        required: true,
+      },
+      {
+        name: 'code',
+        description: 'The link code from /linkaccount in-game',
+        type: 3,
+        required: true,
+      },
+    ],
+  },
 ];
 
 const APPLICATION_ID = process.env.DISCORD_APPLICATION_ID;
